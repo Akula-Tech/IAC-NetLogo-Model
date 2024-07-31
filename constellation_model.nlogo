@@ -19,6 +19,7 @@ to setup
   clear-all
   setup-orbits
   create-satellites-with-coverage
+  draw-sensor-circles
   ask patches [
     set event-intensity 0
     set event-end-time 0
@@ -142,26 +143,27 @@ to maintain-spacing
   ]
 end
 
-; Handle the creation, updating, and expiration of events
 to manage-events
-  ; Remove finished events
-  ask patches with [event-end-time > 0] [
-    if ticks >= event-end-time [  ; if the event has expired, reset it
-      set event-intensity 0
-      set event-end-time 0
-      set pcolor black
+  ; Gradually dissipate events
+  ask patches with [event-intensity > 0] [
+    if ticks >= event-end-time [
+      ; event ended, start dissipation
+      set event-intensity event-intensity - (event-dissipation-rate / 2)
+      if event-intensity <= 0 [
+        set event-end-time 0
+      ]
     ]
   ]
 
   ; Create new events if below max-events
-  if count patches with [event-end-time > 0] < max-events [
-    if random 100 < 100 [  ; 100% chance to create a new event
+  if count patches with [event-intensity > 0] < max-events [
+    if random-float 1 < 1 [  ; 1% chance to create a new event (adjust as needed)
       create-event
     ]
   ]
 
   ; Update event visuals
-  ask patches with [event-end-time > 0] [
+  ask patches [
     set pcolor scale-color orange event-intensity 0 1  ; Color based on intensity
   ]
 end
@@ -206,13 +208,13 @@ to update-satellite-colors
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-18
-18
-715
-716
+0
+10
+728
+739
 -1
 -1
-9.70423
+10.141
 1
 10
 1
@@ -233,10 +235,10 @@ ticks
 30.0
 
 BUTTON
-930
-21
-1005
-54
+935
+10
+1010
+43
 NIL
 setup\n
 NIL
@@ -250,10 +252,10 @@ NIL
 1
 
 BUTTON
-936
-74
-999
-107
+940
+60
+1003
+93
 NIL
 go
 T
@@ -267,100 +269,100 @@ NIL
 1
 
 SLIDER
-735
-290
-907
-323
+740
+279
+912
+312
 min-event-duration
 min-event-duration
 0
 1000
-80.0
+50.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-380
-907
-413
+740
+369
+912
+402
 max-events
 max-events
 0
 1225
-620.0
+840.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-110
-907
-143
+740
+99
+912
+132
 agent-speed
 agent-speed
-0
-10
-1.0
-0.1
+0.01
+1
+0.13
+0.01
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-335
-907
-368
+740
+324
+912
+357
 max-event-duration
 max-event-duration
 0
 1000
-90.0
+20.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-20
-907
-53
+740
+9
+912
+42
 num-orbits
 num-orbits
 0
 10
-8.0
+10.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-65
-907
-98
+740
+54
+912
+87
 num-sats-per-orbit
 num-sats-per-orbit
 0
 10
-9.0
+10.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-735
-200
-907
-233
+740
+189
+912
+222
 min-event-size
 min-event-size
 0
@@ -372,10 +374,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-735
-245
-907
-278
+740
+234
+912
+267
 max-event-size
 max-event-size
 0
@@ -387,25 +389,25 @@ NIL
 HORIZONTAL
 
 SLIDER
-735
-155
-907
-188
+740
+144
+912
+177
 sensor-coverage
 sensor-coverage
 0
 10
-5.9
+2.2
 0.1
 1
 NIL
 HORIZONTAL
 
 BUTTON
-935
-125
-1007
-158
+940
+114
+1012
+147
 go once
 go\n
 NIL
@@ -417,6 +419,21 @@ NIL
 NIL
 NIL
 1
+
+SLIDER
+740
+414
+972
+447
+event-dissipation-rate
+event-dissipation-rate
+0
+1
+0.01
+0.01
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
