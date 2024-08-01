@@ -7,19 +7,30 @@ globals [
   orbit-y-coords    ; list that stores the y-coordinates of each orbit
 ]
 
-turtles-own [
+breed [ground-stations ground-station]
+breed [coverage-circles coverage-circle]
+breed [satellites satellite]
+
+
+satellites-own [
   orbit-index       ; which orbit a satellite belongs to (0 to num-orbits - 1)
   event-detected    ; 0 or 1 indicating if a satellite sensor is withing range of an event patch
+  gs-visibility     ; 0 or 1 indicating if the satellite is connected to a ground station
 ]
 
-breed [satellites satellite]
-breed [coverage-circles coverage-circle]
+ground-stations-own [
+  coverage-area     ; radius of the ground station's coverage area
+  sat-visibility     ; 0 or 1 indicating if the ground station is connected to a satellite
+]
 
 to setup
   clear-all
   setup-orbits
+  create-ground-stations-with-coverage
+  draw-ground-station-coverage
   create-satellites-with-coverage
   draw-sensor-circles
+  draw-satcom-coverage
   ask patches [
     set event-intensity 0
     set event-end-time 0
@@ -56,20 +67,35 @@ to create-satellites-with-coverage
 end
 
 
+to create-ground-stations-with-coverage
+  create-ground-stations num-ground-stations [
+    setxy random-xcor random-ycor
+    set shape "house"
+    set color 9
+    set size 1.5
+    set heading 0  ; make it face right
+    set coverage-area ground-station-coverage
+  ]
+end
+
 to go
   clear-drawing
+  draw-ground-station-coverage
   move-satellites
   maintain-spacing
   manage-events
   draw-sensor-circles
+  draw-satcom-coverage
   detect-events
-  update-satellite-colors
+  detect-gs-coverage
+  update-colors
+;  update-satellite-colors
   tick
 end
 
 ; Move all satellites forward
 to move-satellites
-  ask turtles [
+  ask satellites [
     fd agent-speed  ; move forward by the specified speed
     if xcor >= max-pxcor [  ; if a satellite reaches the right edge of the world
       setxy min-pxcor ycor  ; wrap it around to the left edge
@@ -79,11 +105,11 @@ end
 
 ; Draw sensor coverage circles around satellites
 to draw-sensor-circles
-  ask turtles [
+  ask satellites [
     let original-color color
     let original-heading heading
     pen-up
-    set color blue
+    set color 94
 
     ; Store the original position
     let center-x xcor
@@ -108,13 +134,69 @@ to draw-sensor-circles
   ]
 end
 
+; Draw  coverage circles around satellites
+to draw-satcom-coverage
+  ask satellites [
+    let original-color color
+    let original-heading heading
+    pen-up
+    set color 64
+
+    ; Store the original position
+    let center-x xcor
+    let center-y ycor
+
+    ; Draw the circle
+    pen-down
+    repeat 360 [
+      ; Calculate the next point on the circle
+      let next-x (center-x + (satcom-coverage * sin heading))
+      let next-y (center-y + (satcom-coverage * cos heading))
+      ; Move to the next point
+      setxy next-x next-y
+      rt 1
+    ]
+
+    ; Return to the original position and reset properties
+    pen-up
+    setxy center-x center-y
+    set color original-color
+    set heading original-heading
+  ]
+end
+
+to draw-ground-station-coverage
+  ask ground-stations [
+    let original-color color
+    let original-heading 0
+    pen-up
+    set color 64
+
+    let center-x xcor
+    let center-y ycor
+
+    pen-down
+    repeat 360 [
+      let next-x (center-x + (coverage-area * sin heading))
+      let next-y (center-y + (coverage-area * cos heading))
+      setxy next-x next-y
+      rt 1
+    ]
+
+    pen-up
+    setxy center-x center-y
+    set color original-color
+    set heading original-heading
+  ]
+end
+
 ; Maintain proper spacing between satellites in each orbit
 ; had to write this function since satellites were not maintaining distance between each other
 ; after a certain point - either a float point precision error that accumulates or something
 ; to do with the world/patch size and wrap-around.
 to maintain-spacing
   foreach (range num-orbits) [ i ->  ; for each orbit
-    let orbit-satellites turtles with [orbit-index = i]  ; get all satellites in this orbit
+    let orbit-satellites satellites with [orbit-index = i]  ; get all satellites in this orbit
     let ideal-spacing world-width / num-sats-per-orbit  ; Cclculate ideal space between satellites
     let first-satellite min-one-of orbit-satellites [xcor]  ; find the leftmost satellite
     let current-satellite first-satellite
@@ -147,7 +229,7 @@ to manage-events
   ; Gradually dissipate events
   ask patches with [event-intensity > 0] [
     if ticks >= event-end-time [
-      ;  ended, start dissipation
+      ; event ended, start dissipation
       set event-intensity event-intensity - (event-dissipation-rate / 2)
       if event-intensity <= 0 [
         set event-end-time 0
@@ -196,6 +278,57 @@ to detect-events
       [ set event-detected 1 ]
       [ set event-detected 0 ]
   ]
+
+;  ask ground-stations [
+;    ifelse any? satellites in-radius coverage-area with [event-intensity > 0]
+;      [ set color yellow ]
+;      [ set color green ]
+;  ]
+end
+
+; procedure to detect ground station coverage
+to detect-gs-coverage
+  ask satellites [
+    set gs-visibility 0
+  ]
+  ask ground-stations [
+    set sat-visibility 0
+  ]
+
+  ask satellites [
+    let this-satellite self
+    ask ground-stations [
+      if distance this-satellite <= (satcom-coverage + coverage-area) [
+        ask this-satellite [
+          set gs-visibility 1
+        ]
+        set sat-visibility 1
+      ]
+    ]
+  ]
+end
+
+; update colors based on event detection and ground station connection
+to update-colors
+  ask satellites [
+    ifelse event-detected = 1 [
+      set color yellow
+    ] [
+      ifelse gs-visibility = 1 [
+        set color green
+      ] [
+        set color red
+      ]
+    ]
+  ]
+
+  ask ground-stations [
+    ifelse sat-visibility = 1 [
+      set color green
+    ] [
+      set color 9  ; Original color (light blue)
+    ]
+  ]
 end
 
 ; Update satellite colors based on event detection
@@ -208,9 +341,9 @@ to update-satellite-colors
 end
 @#$#@#$#@
 GRAPHICS-WINDOW
-0
 10
-728
+10
+738
 739
 -1
 -1
@@ -252,10 +385,10 @@ NIL
 1
 
 BUTTON
-940
-60
-1003
-93
+935
+55
+998
+88
 NIL
 go
 T
@@ -269,69 +402,69 @@ NIL
 1
 
 SLIDER
-740
+750
 279
-912
+922
 312
 min-event-duration
 min-event-duration
 0
 1000
-50.0
+550.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 369
-912
+922
 402
 max-events
 max-events
 0
 1225
-840.0
+830.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 99
-912
+922
 132
 agent-speed
 agent-speed
 0.01
 1
-0.13
+0.0125
 0.01
 1
 NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 324
-912
+922
 357
 max-event-duration
 max-event-duration
 0
 1000
-20.0
+500.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 9
-912
+922
 42
 num-orbits
 num-orbits
@@ -344,9 +477,9 @@ NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 54
-912
+922
 87
 num-sats-per-orbit
 num-sats-per-orbit
@@ -359,9 +492,9 @@ NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 189
-912
+922
 222
 min-event-size
 min-event-size
@@ -374,9 +507,9 @@ NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 234
-912
+922
 267
 max-event-size
 max-event-size
@@ -389,25 +522,25 @@ NIL
 HORIZONTAL
 
 SLIDER
-740
+750
 144
-912
+922
 177
 sensor-coverage
 sensor-coverage
 0
 10
-2.2
+1.5
 0.1
 1
 NIL
 HORIZONTAL
 
 BUTTON
-940
-114
-1012
-147
+935
+100
+1007
+133
 go once
 go\n
 NIL
@@ -421,9 +554,9 @@ NIL
 1
 
 SLIDER
-740
+750
 414
-972
+925
 447
 event-dissipation-rate
 event-dissipation-rate
@@ -431,6 +564,51 @@ event-dissipation-rate
 1
 0.01
 0.01
+1
+NIL
+HORIZONTAL
+
+SLIDER
+750
+460
+925
+493
+num-ground-stations
+num-ground-stations
+0
+100
+5.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+750
+505
+940
+538
+ground-station-coverage
+ground-station-coverage
+0
+10
+1.4
+0.1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+750
+550
+942
+583
+satcom-coverage
+satcom-coverage
+0
+10
+2.5
+0.1
 1
 NIL
 HORIZONTAL
