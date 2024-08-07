@@ -128,10 +128,11 @@ to setup-inter-satellite-links
 
     ; Find north and south links (adjacent orbits)
     if current-orbit > 0 [
-      set north-link min-one-of (satellites with [orbit-index = current-orbit + 1]) [distance current-satellite]
+      set south-link min-one-of (satellites with [orbit-index = current-orbit - 1]) [distance current-satellite]
     ]
     if current-orbit < (num-orbits - 1) [
-      set south-link min-one-of (satellites with [orbit-index = current-orbit - 1]) [distance current-satellite]
+
+      set north-link min-one-of (satellites with [orbit-index = current-orbit + 1]) [distance current-satellite]
     ]
 
     ; Find diagonal links
@@ -351,6 +352,33 @@ to-report get-event-priority [evt-type]
 end
 
 
+to-report highest-priority-event [events]
+  let max-priority 0
+  let highest-priority-event-type 0
+  foreach events [evt-type ->
+    let priority get-event-priority evt-type
+    if priority > max-priority [
+      set max-priority priority
+      set highest-priority-event-type evt-type
+    ]
+  ]
+  report highest-priority-event-type
+end
+
+to detect-events
+  ask satellites [
+    let detected-events [event-type] of patches in-radius sensor-coverage with [event-intensity > 0]
+    ifelse not empty? detected-events [
+      let highest-priority-evt highest-priority-event detected-events
+      set event-detected highest-priority-evt
+      set event-priority get-event-priority highest-priority-evt
+    ] [
+      set event-detected 0
+      set event-priority 0
+    ]
+  ]
+end
+
 ; procedure to detect ground station coverage
 to detect-gs-coverage
   ask satellites [
@@ -425,7 +453,7 @@ to update-inter-satellite-links
 
     ; Update north and south links
     if current-orbit > 0 [
-      set north-link min-one-of (satellites with [orbit-index = current-orbit + 1]) [distance current-satellite]
+
     ]
     if current-orbit < (num-orbits - 1) [
       set south-link min-one-of (satellites with [orbit-index = current-orbit - 1]) [distance current-satellite]
@@ -513,7 +541,7 @@ min-event-duration
 min-event-duration
 0
 1000
-50.0
+500.0
 10
 1
 NIL
@@ -528,7 +556,7 @@ max-events
 max-events
 0
 5000
-990.0
+870.0
 10
 1
 NIL
@@ -558,7 +586,7 @@ max-event-duration
 max-event-duration
 0
 1000
-60.0
+500.0
 10
 1
 NIL
@@ -617,7 +645,7 @@ SLIDER
 max-event-size
 max-event-size
 0
-10
+100
 7.0
 1
 1
@@ -633,7 +661,7 @@ sensor-coverage
 sensor-coverage
 0
 10
-1.9
+2.2
 0.1
 1
 NIL
@@ -710,7 +738,7 @@ satcom-coverage
 satcom-coverage
 0
 10
-2.5
+2.9
 0.1
 1
 NIL
