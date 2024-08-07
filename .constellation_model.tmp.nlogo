@@ -1,10 +1,13 @@
 patches-own [
   event-intensity   ; event strength [0,1]
   event-end-time    ; when event will end in ticks
+  event-type        ; type of event (1 = orange, 2 = blue, 3 = green)
 ]
 
 globals [
   orbit-y-coords    ; list that stores the y-coordinates of each orbit
+  event-colors      ; list of colors for different event types
+  event-priorities  ; list of priorities for different event types
 ]
 
 breed [ground-stations ground-station]
@@ -15,7 +18,16 @@ breed [satellites satellite]
 satellites-own [
   orbit-index       ; which orbit a satellite belongs to (0 to num-orbits - 1)
   event-detected    ; 0 or 1 indicating if a satellite sensor is withing range of an event patch
+  event-priority    ; Priority of the detected event
   gs-visibility     ; 0 or 1 indicating if the satellite is connected to a ground station
+  north-link        ; link to the satellite directly north
+  south-link        ; link to the satellite directly south
+  east-link         ; link to the satellite directly east
+  west-link         ; link to the satellite directly west
+  northeast-link    ; link to the satellite in the northeast
+  northwest-link    ; link to the satellite in the northwest
+  southeast-link    ; link to the satellite in the southeast
+  southwest-link    ; link to the satellite in the southwest
 ]
 
 ground-stations-own [
@@ -26,16 +38,24 @@ ground-stations-own [
 to setup
   clear-all
   setup-orbits
+  setup-event-properties
   create-ground-stations-with-coverage
   draw-ground-station-coverage
   create-satellites-with-coverage
-  draw-sensor-circles
   draw-satcom-coverage
+  draw-sensor-circles
+  setup-inter-satellite-links
   ask patches [
     set event-intensity 0
     set event-end-time 0
+    set event-type 0
   ]
   reset-ticks
+end
+
+to setup-event-properties
+  set event-colors [orange blue green]
+  set event-priorities [1 0.7 0.2]
 end
 
 ; Calculate the y-coordinates for each orbit
@@ -57,9 +77,19 @@ to create-satellites-with-coverage
       create-satellites 1 [  ; create a new satellite
         setxy (min-pxcor + (j * x-spacing)) y-coord  ; initial position of the satellite
         set heading 90  ; make it face right
-        set color red
+        set color white
         set orbit-index i  ; assign it to this orbit
         set event-detected 0  ; initialize event detection status
+        set event-priority 0
+        ; Initialize inter-satellite link variables
+        set north-link nobody
+        set south-link nobody
+        set east-link nobody
+        set west-link nobody
+        set northeast-link nobody
+        set northwest-link nobody
+        set southeast-link nobody
+        set southwest-link nobody
 
       ]
     ]
@@ -78,17 +108,57 @@ to create-ground-stations-with-coverage
   ]
 end
 
+; New procedure to set up inter-satellite links
+to setup-inter-satellite-links
+  ask satellites [
+    let current-satellite self
+    let current-orbit orbit-index
+
+    ; Find east and west links (same orbit)
+    set east-link min-one-of (other satellites with [orbit-index = current-orbit and xcor > [xcor] of current-satellite]) [xcor]
+    set west-link max-one-of (other satellites with [orbit-index = current-orbit and xcor < [xcor] of current-satellite]) [xcor]
+
+    ; Handle wrap-around for east and west
+    if east-link = nobody [
+      set east-link min-one-of (satellites with [orbit-index = current-orbit]) [xcor]
+    ]
+    if west-link = nobody [
+      set west-link max-one-of (satellites with [orbit-index = current-orbit]) [xcor]
+    ]
+
+    ; Find north and south links (adjacent orbits)
+    if current-orbit > 0 [
+      set north-link min-one-of (satellites with [orbit-index = current-orbit + 1]) [distance current-satellite]
+    ]
+    if current-orbit < (num-orbits - 1) [
+      set south-link min-one-of (satellites with [orbit-index = current-orbit - 1]) [distance current-satellite]
+    ]
+
+    ; Find diagonal links
+    if north-link != nobody [
+      set northeast-link [east-link] of north-link
+      set northwest-link [west-link] of north-link
+    ]
+    if south-link != nobody [
+      set southeast-link [east-link] of south-link
+      set southwest-link [west-link] of south-link
+    ]
+  ]
+end
+
 to go
   clear-drawing
   draw-ground-station-coverage
   move-satellites
   maintain-spacing
+  update-inter-satellite-links
   manage-events
-  draw-sensor-circles
   draw-satcom-coverage
+  draw-sensor-circles
   detect-events
   detect-gs-coverage
   update-colors
+  ;draw-inter-satellite-links
 ;  update-satellite-colors
   tick
 end
@@ -109,7 +179,7 @@ to draw-sensor-circles
     let original-color color
     let original-heading heading
     pen-up
-    set color 94
+    set color white
 
     ; Store the original position
     let center-x xcor
@@ -134,13 +204,13 @@ to draw-sensor-circles
   ]
 end
 
-; Draw  coverage circles around satellites
+; Draw satcom coverage circles around satellites
 to draw-satcom-coverage
   ask satellites [
     let original-color color
     let original-heading heading
     pen-up
-    set color 64
+    set color red
 
     ; Store the original position
     let center-x xcor
@@ -170,7 +240,7 @@ to draw-ground-station-coverage
     let original-color color
     let original-heading 0
     pen-up
-    set color 64
+    set color red
 
     let center-x xcor
     let center-y ycor
@@ -225,6 +295,7 @@ to maintain-spacing
   ]
 end
 
+
 to manage-events
   ; Gradually dissipate events
   ask patches with [event-intensity > 0] [
@@ -233,6 +304,7 @@ to manage-events
       set event-intensity event-intensity - (event-dissipation-rate / 2)
       if event-intensity <= 0 [
         set event-end-time 0
+        set event-type 0
       ]
     ]
   ]
@@ -246,7 +318,9 @@ to manage-events
 
   ; Update event visuals
   ask patches [
-    set pcolor scale-color orange event-intensity 0 1  ; Color based on intensity
+    if event-type > 0 [
+      set pcolor scale-color (item (event-type - 1) event-colors) event-intensity 0 1  ; Color based on intensity and type
+    ]
   ]
 end
 
@@ -256,35 +330,26 @@ to create-event
   if event-center != nobody [
     let event-size min-event-size + random max-event-size  ; random size within parameters
     let event-duration min-event-duration + random max-event-duration  ; random duration within parameters
+    let new-event-type 1 + random length event-colors  ; randomly choose an event type
     ask event-center [
       set event-end-time ticks + event-duration
+      set event-type new-event-type
       ; Set intensity for all patches within the event radius
       ask patches in-radius event-size [
         let distance-factor 1 - (distance myself / event-size)
         if distance-factor > event-intensity [
           set event-intensity distance-factor
           set event-end-time [event-end-time] of myself
+          set event-type new-event-type
         ]
       ]
     ]
   ]
 end
-
-
-; Detect events within the sensor coverage of each satellite
-to detect-events
-  ask satellites [
-    ifelse any? patches in-radius sensor-coverage with [event-intensity > 0]
-      [ set event-detected 1 ]
-      [ set event-detected 0 ]
-  ]
-
-;  ask ground-stations [
-;    ifelse any? satellites in-radius coverage-area with [event-intensity > 0]
-;      [ set color yellow ]
-;      [ set color green ]
-;  ]
+to-report get-event-priority [evt-type]
+  report item (evt-type - 1) event-priorities
 end
+
 
 ; procedure to detect ground station coverage
 to detect-gs-coverage
@@ -311,20 +376,20 @@ end
 ; update colors based on event detection and ground station connection
 to update-colors
   ask satellites [
-    ifelse event-detected = 1 [
-      set color yellow
+    ifelse event-detected > 0 [
+      set color item (event-detected - 1) event-colors
     ] [
       ifelse gs-visibility = 1 [
-        set color green
-      ] [
         set color red
+      ] [
+        set color white
       ]
     ]
   ]
 
   ask ground-stations [
     ifelse sat-visibility = 1 [
-      set color green
+      set color red
     ] [
       set color 9  ; Original color (light blue)
     ]
@@ -337,6 +402,44 @@ to update-satellite-colors
     ifelse event-detected = 1
       [ set color yellow ]  ; change color to yellow if event is detected
       [ set color red ]     ; change color back to red if no event is detected
+  ]
+end
+
+; New procedure to update inter-satellite links after movement
+to update-inter-satellite-links
+  ask satellites [
+    let current-satellite self
+    let current-orbit orbit-index
+
+    ; Update east and west links
+    set east-link min-one-of (other satellites with [orbit-index = current-orbit and xcor > [xcor] of current-satellite]) [xcor]
+    set west-link max-one-of (other satellites with [orbit-index = current-orbit and xcor < [xcor] of current-satellite]) [xcor]
+
+    ; Handle wrap-around for east and west
+    if east-link = nobody [
+      set east-link min-one-of (satellites with [orbit-index = current-orbit]) [xcor]
+    ]
+    if west-link = nobody [
+      set west-link max-one-of (satellites with [orbit-index = current-orbit]) [xcor]
+    ]
+
+    ; Update north and south links
+    if current-orbit > 0 [
+      set north-link min-one-of (satellites with [orbit-index = current-orbit + 1]) [distance current-satellite]
+    ]
+    if current-orbit < (num-orbits - 1) [
+      set south-link min-one-of (satellites with [orbit-index = current-orbit - 1]) [distance current-satellite]
+    ]
+
+    ; Update diagonal links
+    if north-link != nobody [
+      set northeast-link [east-link] of north-link
+      set northwest-link [west-link] of north-link
+    ]
+    if south-link != nobody [
+      set southeast-link [east-link] of south-link
+      set southwest-link [west-link] of south-link
+    ]
   ]
 end
 @#$#@#$#@
@@ -410,7 +513,7 @@ min-event-duration
 min-event-duration
 0
 1000
-550.0
+50.0
 10
 1
 NIL
@@ -424,8 +527,8 @@ SLIDER
 max-events
 max-events
 0
-1225
-830.0
+5000
+990.0
 10
 1
 NIL
@@ -455,7 +558,7 @@ max-event-duration
 max-event-duration
 0
 1000
-500.0
+60.0
 10
 1
 NIL
@@ -530,7 +633,7 @@ sensor-coverage
 sensor-coverage
 0
 10
-1.5
+1.9
 0.1
 1
 NIL
@@ -592,7 +695,7 @@ ground-station-coverage
 ground-station-coverage
 0
 10
-1.4
+3.1
 0.1
 1
 NIL
@@ -612,6 +715,39 @@ satcom-coverage
 1
 NIL
 HORIZONTAL
+
+SWITCH
+750
+595
+905
+628
+enable-north-south?
+enable-north-south?
+0
+1
+-1000
+
+SWITCH
+750
+640
+900
+673
+enable-east-west?
+enable-east-west?
+0
+1
+-1000
+
+SWITCH
+750
+685
+902
+718
+enable-diagonals?
+enable-diagonals?
+0
+1
+-1000
 
 @#$#@#$#@
 ## WHAT IS IT?
