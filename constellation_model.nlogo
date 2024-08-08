@@ -98,14 +98,102 @@ end
 
 
 to create-ground-stations-with-coverage
+  ifelse even-gs-distribution [
+    create-evenly-distributed-ground-stations
+  ] [
+    create-randomly-distributed-ground-stations
+  ]
+end
+
+to create-randomly-distributed-ground-stations
   create-ground-stations num-ground-stations [
     setxy random-xcor random-ycor
-    set shape "house"
-    set color 9
-    set size 1.5
-    set heading 0  ; make it face right
-    set coverage-area ground-station-coverage
+    set-ground-station-properties
   ]
+end
+
+;to create-evenly-distributed-ground-stations
+;  let sqrt-stations sqrt num-ground-stations
+;  let grid-size floor sqrt-stations
+;  let remaining-stations num-ground-stations - (grid-size * grid-size)
+;  let x-spacing world-width / (grid-size + 1)
+;  let y-spacing world-height / (grid-size + 1)
+;
+;  ; Create ground stations in a grid pattern
+;  foreach (range 1 (grid-size + 1)) [ x ->
+;    foreach (range 1 (grid-size + 1)) [ y ->
+;      create-ground-stations 1 [
+;        setxy (min-pxcor + x * x-spacing) (min-pycor + y * y-spacing)
+;        set-ground-station-properties
+;      ]
+;    ]
+;  ]
+;
+;  ; Place remaining ground stations
+;  repeat remaining-stations [
+;    create-ground-stations 1 [
+;      setxy random-xcor random-ycor
+;      set-ground-station-properties
+;    ]
+;  ]
+;end
+
+;to create-evenly-distributed-ground-stations
+;  let phi 0
+;  let golden-angle 137.508 ; golden angle in degrees
+;
+;  create-ground-stations num-ground-stations [
+;    ; Calculate radius based on index (0 to 1)
+;    let r sqrt (who / (num-ground-stations - 1))
+;
+;    ; Convert polar coordinates (r, phi) to Cartesian (x, y)
+;    let x r * cos phi
+;    let y r * sin phi
+;
+;    ; Scale and shift coordinates to fit within the world
+;    setxy (x * max-pxcor) (y * max-pycor)
+;
+;    set-ground-station-properties
+;
+;    ; Update phi for the next ground station
+;    set phi (phi + golden-angle) mod 360
+;  ]
+;end
+
+
+to create-evenly-distributed-ground-stations
+  let num-rows round sqrt num-ground-stations
+  let num-cols ceiling (num-ground-stations / num-rows)
+
+  let row-spacing world-height / (num-rows + 1)
+  let col-spacing world-width / (num-cols + 1)
+
+  let ground-stations-created 0
+  let row 1
+  let col 1
+
+  while [ground-stations-created < num-ground-stations] [
+    create-ground-stations 1 [
+      setxy (min-pxcor + col * col-spacing) (min-pycor + row * row-spacing)
+      set-ground-station-properties
+    ]
+
+    set ground-stations-created ground-stations-created + 1
+
+    set col col + 1
+    if col > num-cols [
+      set col 1
+      set row row + 1
+    ]
+  ]
+end
+
+to set-ground-station-properties
+  set shape "house"
+  set color 9
+  set size 1.5
+  set heading 0  ; make it face right
+  set coverage-area ground-station-coverage
 end
 
 ; New procedure to set up inter-satellite links
@@ -534,9 +622,9 @@ NIL
 
 SLIDER
 750
-279
+325
 922
-312
+358
 min-event-duration
 min-event-duration
 0
@@ -549,9 +637,9 @@ HORIZONTAL
 
 SLIDER
 750
-369
+415
 922
-402
+448
 max-events
 max-events
 0
@@ -579,9 +667,9 @@ HORIZONTAL
 
 SLIDER
 750
-324
+370
 922
-357
+403
 max-event-duration
 max-event-duration
 0
@@ -624,9 +712,9 @@ HORIZONTAL
 
 SLIDER
 750
-189
+235
 922
-222
+268
 min-event-size
 min-event-size
 0
@@ -639,9 +727,9 @@ HORIZONTAL
 
 SLIDER
 750
-234
+280
 922
-267
+313
 max-event-size
 max-event-size
 0
@@ -661,7 +749,7 @@ sensor-coverage
 sensor-coverage
 0
 10
-2.2
+2.3
 0.1
 1
 NIL
@@ -686,9 +774,9 @@ NIL
 
 SLIDER
 750
-414
+460
 925
-447
+493
 event-dissipation-rate
 event-dissipation-rate
 0
@@ -701,14 +789,14 @@ HORIZONTAL
 
 SLIDER
 750
-460
+506
 925
-493
+539
 num-ground-stations
 num-ground-stations
 0
 100
-5.0
+6.0
 1
 1
 NIL
@@ -716,9 +804,9 @@ HORIZONTAL
 
 SLIDER
 750
-505
+586
 940
-538
+619
 ground-station-coverage
 ground-station-coverage
 0
@@ -731,14 +819,14 @@ HORIZONTAL
 
 SLIDER
 750
-550
+190
 942
-583
+223
 satcom-coverage
 satcom-coverage
 0
 10
-2.9
+3.1
 0.1
 1
 NIL
@@ -746,9 +834,9 @@ HORIZONTAL
 
 SWITCH
 750
-595
+630
 905
-628
+663
 enable-north-south?
 enable-north-south?
 0
@@ -757,9 +845,9 @@ enable-north-south?
 
 SWITCH
 750
-640
+675
 900
-673
+708
 enable-east-west?
 enable-east-west?
 0
@@ -768,11 +856,22 @@ enable-east-west?
 
 SWITCH
 750
-685
+720
 902
-718
+753
 enable-diagonals?
 enable-diagonals?
+0
+1
+-1000
+
+SWITCH
+750
+546
+912
+579
+even-gs-distribution
+even-gs-distribution
 0
 1
 -1000
