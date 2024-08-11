@@ -43,6 +43,7 @@ to setup
   clear-all
   setup-orbits
   setup-event-properties
+  setup-patches
   create-ground-stations-with-coverage
   draw-ground-station-coverage
   create-satellites-with-coverage
@@ -58,13 +59,23 @@ to setup
   reset-ticks
 end
 
+; procedure to initialize patches
+to setup-patches
+  ask patches [
+    set event-intensity 0
+    set event-end-time 0
+    set event-type 0
+    set is-static-zone false  ; Initialize is-static-zone for all patches
+  ]
+end
+
 to setup-event-properties
   set event-colors [orange blue green]
   set event-priorities [1 0.7 0.2]
   set static-zone-color 44
 end
 
-; New procedure to set up static monitoring zones
+; procedure to set up static monitoring zones
 to setup-static-zones
   let num-zones random (max-static-zones + 1)
   repeat num-zones [
@@ -173,7 +184,7 @@ to set-ground-station-properties
   set coverage-area ground-station-coverage
 end
 
-; New procedure to set up inter-satellite links
+; Procedure to set up inter-satellite links
 to setup-inter-satellite-links
   ask satellites [
     let current-satellite self
@@ -363,34 +374,37 @@ end
 
 
 to manage-events
-  ; Gradually dissipate events
   ask patches with [event-intensity > 0] [
     if ticks >= event-end-time [
-      ; event ended, start dissipation
       set event-intensity event-intensity - (event-dissipation-rate / 2)
       if event-intensity <= 0 [
+        set event-intensity 0
         set event-end-time 0
         set event-type 0
-        ifelse is-static-zone =  [
-          set pcolor static-zone-color; Revert to static zone color
-        ] [
-          set pcolor black  ; Or whatever your default background color is
-        ]
       ]
+      update-patch-color
     ]
   ]
 
-  ; Create new events if below max-events
   if count patches with [event-intensity > 0] < max-events [
-    if random-float 1 < 1 [  ; 1% chance to create a new event (adjust as needed)
+    if random-float 1 < 1 [
       create-event
     ]
   ]
 
-  ; Update event visuals
-  ask patches [
-    if event-type > 0 [
-      set pcolor scale-color (item (event-type - 1) event-colors) event-intensity 0 1  ; Color based on intensity and type
+  ask patches with [event-type > 0] [
+    update-patch-color
+  ]
+end
+
+to update-patch-color
+  ifelse event-type > 0 [
+    set pcolor scale-color (item (event-type - 1) event-colors) event-intensity 0 1
+  ] [
+    ifelse is-static-zone [
+      set pcolor static-zone-color
+    ] [
+      set pcolor black  ;
     ]
   ]
 end
@@ -413,10 +427,12 @@ to create-event
           set event-end-time [event-end-time] of myself
           set event-type new-event-type
         ]
+        update-patch-color  ; Update the patch color
       ]
     ]
   ]
 end
+
 to-report get-event-priority [evt-type]
   report item (evt-type - 1) event-priorities
 end
@@ -501,7 +517,7 @@ to update-colors
   ]
 end
 
-; New procedure to draw satellite with outline
+; Procedure to draw satellite with outline
 to draw-satellite-with-outline
   let original-color color
 
@@ -649,7 +665,7 @@ max-events
 max-events
 0
 5000
-440.0
+820.0
 10
 1
 NIL
@@ -733,7 +749,7 @@ HORIZONTAL
 SLIDER
 750
 280
-875
+865
 313
 max-event-size
 max-event-size
@@ -884,22 +900,22 @@ even-gs-distribution
 SLIDER
 900
 415
-1020
+1025
 448
 max-static-zones
 max-static-zones
 0
 100
-52.0
+22.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-885
+875
 280
-1025
+1030
 313
 max-static-zone-size
 max-static-zone-size
