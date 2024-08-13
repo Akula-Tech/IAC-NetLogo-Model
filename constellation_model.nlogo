@@ -32,6 +32,11 @@ satellites-own [
   southwest-link    ; link to the satellite in the southwest
   over-static-zone  ; 0 or 1 indicating if the satellite is over a static monitoring zone
   outline-color     ; color of the satellite's outline
+  distances-to-gs    ; list to store distances to each ground station
+  closest-gs         ; the closest ground station
+  distance-to-closest-gs  ; distance to the closest ground station
+  links-to-closest-gs  ; New variable to store hop distance to closest ground station
+
 ]
 
 ground-stations-own [
@@ -55,6 +60,9 @@ to setup
     set event-intensity 0
     set event-end-time 0
     set event-type 0
+  ]
+  ask satellites [
+    set links-to-closest-gs 9999  ; Initialize to a large number
   ]
   reset-ticks
 end
@@ -227,6 +235,7 @@ to go
   clear-drawing
   draw-ground-station-coverage
   move-satellites
+  calculate-distances-to-ground-stations
   maintain-spacing
   update-inter-satellite-links
   manage-events
@@ -234,10 +243,56 @@ to go
   draw-sensor-circles
   detect-events
   detect-gs-coverage
+  update-closest-path-to-gs
   update-colors
   ;draw-inter-satellite-links
 ;  update-satellite-colors
   tick
+end
+
+;to calculate-distances-to-ground-stations
+;  ask satellites [
+;    set distances-to-gs []
+;    let this-satellite self
+;    ask ground-stations [
+;      let dist distance this-satellite
+;      ask this-satellite [
+;        set distances-to-gs lput (list myself dist) distances-to-gs
+;        if this-satellite = satellite 6 [
+;          print distances-to-gs
+;        ]
+;      ]
+;    ]
+;    set distances-to-gs sort-by [[d1 d2] -> item 1 d1 < item 1 d2] distances-to-gs
+;    if not empty? distances-to-gs [
+;      set closest-gs item 0 first distances-to-gs
+;      set distance-to-closest-gs item 1 first distances-to-gs
+;    ]
+;  ]
+;end
+
+to calculate-distances-to-ground-stations
+  ask satellites [
+    let this-satellite self
+    set distances-to-gs []
+    let sat-x xcor
+    let sat-y ycor
+    ask ground-stations [
+      let gs-x xcor
+      let gs-y ycor
+      let dx_ sat-x - gs-x
+      let dy_ sat-y - gs-y
+      let euclidean-dist sqrt (dx_ * dx_ + dy_ * dy_)
+      ask this-satellite [
+        set distances-to-gs lput (list myself euclidean-dist) distances-to-gs
+      ]
+    ]
+    set distances-to-gs sort-by [[d1 d2] -> item 1 d1 < item 1 d2] distances-to-gs
+    if not empty? distances-to-gs [
+      set closest-gs item 0 first distances-to-gs
+      set distance-to-closest-gs item 1 first distances-to-gs
+    ]
+  ]
 end
 
 ; Move all satellites forward
@@ -489,6 +544,23 @@ to detect-gs-coverage
   ]
 end
 
+; Add this new procedure
+to update-closest-path-to-gs
+  ask satellites [
+    ifelse gs-visibility = 1 [
+      set links-to-closest-gs 0
+    ] [
+      let neighbor-links [links-to-closest-gs] of (turtle-set north-link south-link east-link west-link northeast-link northwest-link southeast-link southwest-link)
+      let min-neighbor-links min neighbor-links
+      ifelse min-neighbor-links = nobody [
+        set links-to-closest-gs 9999  ; A large number to represent "infinity"
+      ] [
+        set links-to-closest-gs min-neighbor-links + 1
+      ]
+    ]
+  ]
+end
+
 ; update colors based on event detection and ground station connection
 to update-colors
   ask satellites [
@@ -498,11 +570,12 @@ to update-colors
       ifelse over-static-zone = 1 [
         set color static-zone-color
       ] [
-        ifelse gs-visibility = 1 [
-          set color red
-        ] [
-          set color white
-        ]
+;        ifelse gs-visibility = 1 [
+;          set color red
+;        ] [
+;          set color white
+;        ]
+        set color scale-color red links-to-closest-gs -2 2
       ]
     ]
     draw-satellite-with-outline
@@ -644,7 +717,7 @@ NIL
 SLIDER
 750
 325
-890
+900
 358
 min-event-duration
 min-event-duration
@@ -659,13 +732,13 @@ HORIZONTAL
 SLIDER
 750
 415
-890
+880
 448
 max-events
 max-events
 0
 5000
-920.0
+960.0
 10
 1
 NIL
@@ -689,7 +762,7 @@ HORIZONTAL
 SLIDER
 750
 370
-890
+900
 403
 max-event-duration
 max-event-duration
@@ -856,7 +929,7 @@ HORIZONTAL
 SWITCH
 750
 630
-905
+925
 663
 enable-north-south?
 enable-north-south?
@@ -867,7 +940,7 @@ enable-north-south?
 SWITCH
 750
 675
-900
+925
 708
 enable-east-west?
 enable-east-west?
@@ -878,7 +951,7 @@ enable-east-west?
 SWITCH
 750
 720
-902
+925
 753
 enable-diagonals?
 enable-diagonals?
@@ -898,15 +971,15 @@ even-gs-distribution
 -1000
 
 SLIDER
-900
+890
 415
-1025
+1030
 448
 max-static-zones
 max-static-zones
 0
 100
-22.0
+15.0
 1
 1
 NIL
