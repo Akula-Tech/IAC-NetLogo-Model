@@ -35,7 +35,7 @@ satellites-own [
   distances-to-gs    ; list to store distances to each ground station
   closest-gs         ; the closest ground station
   distance-to-closest-gs  ; distance to the closest ground station
-  links-to-closest-gs  ; New variable to store hop distance to closest ground station
+  links-to-closest-gs  ; New variable to store num links to closest ground station
 
 ]
 
@@ -243,7 +243,7 @@ to go
   draw-sensor-circles
   detect-events
   detect-gs-coverage
-  update-closest-path-to-gs
+;  update-closest-path-to-gs
   update-colors
   ;draw-inter-satellite-links
 ;  update-satellite-colors
@@ -294,6 +294,7 @@ to calculate-distances-to-ground-stations
     ]
   ]
 end
+
 
 ; Move all satellites forward
 to move-satellites
@@ -544,25 +545,11 @@ to detect-gs-coverage
   ]
 end
 
-; Add this new procedure
-to update-closest-path-to-gs
-  ask satellites [
-    ifelse gs-visibility = 1 [
-      set links-to-closest-gs 0
-    ] [
-      let neighbor-links [links-to-closest-gs] of (turtle-set north-link south-link east-link west-link northeast-link northwest-link southeast-link southwest-link)
-      let min-neighbor-links min neighbor-links
-      ifelse min-neighbor-links = nobody [
-        set links-to-closest-gs 9999  ; A large number to represent "infinity"
-      ] [
-        set links-to-closest-gs min-neighbor-links + 1
-      ]
-    ]
-  ]
-end
+
 
 ; update colors based on event detection and ground station connection
 to update-colors
+  let all-distances [distance-to-closest-gs] of satellites
   ask satellites [
     ifelse event-detected > 0 [
       set color item (event-detected - 1) event-colors
@@ -570,12 +557,18 @@ to update-colors
       ifelse over-static-zone = 1 [
         set color static-zone-color
       ] [
-;        ifelse gs-visibility = 1 [
-;          set color red
-;        ] [
-;          set color white
-;        ]
-        set color scale-color red links-to-closest-gs -2 2
+        ifelse gs-visibility = 1 [
+          set color red
+        ] [
+        if not empty? all-distances [
+          let min-distance-to-gs min all-distances
+          let max-distance-to-gs max all-distances
+
+           set color scale-color red distance-to-closest-gs (-1 * (min-distance-to-gs) - 6) (max-distance-to-gs - 6)
+          ]
+        ]
+
+;        set color scale-color red links-to-closest-gs -2 2
       ]
     ]
     draw-satellite-with-outline
@@ -723,7 +716,7 @@ min-event-duration
 min-event-duration
 0
 1000
-20.0
+360.0
 10
 1
 NIL
@@ -783,7 +776,7 @@ num-orbits
 num-orbits
 0
 10
-10.0
+6.0
 1
 1
 NIL
@@ -798,7 +791,7 @@ num-sats-per-orbit
 num-sats-per-orbit
 0
 10
-10.0
+5.0
 1
 1
 NIL
@@ -813,7 +806,7 @@ min-event-size
 min-event-size
 0
 10
-2.0
+7.0
 1
 1
 NIL
@@ -822,13 +815,13 @@ HORIZONTAL
 SLIDER
 750
 280
-865
+880
 313
 max-event-size
 max-event-size
 0
 100
-7.0
+5.0
 1
 1
 NIL
@@ -890,7 +883,7 @@ num-ground-stations
 num-ground-stations
 0
 100
-6.0
+2.0
 1
 1
 NIL
@@ -979,16 +972,16 @@ max-static-zones
 max-static-zones
 0
 100
-15.0
+4.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-875
+890
 280
-1030
+1045
 313
 max-static-zone-size
 max-static-zone-size
