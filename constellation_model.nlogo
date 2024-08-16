@@ -10,6 +10,7 @@ globals [
   event-colors      ; list of colors for different event types
   event-priorities  ; list of priorities for different event types
   static-zone-color ; color for static monitoring zones
+
 ]
 
 breed [ground-stations ground-station]
@@ -19,9 +20,23 @@ breed [satellites satellite]
 
 satellites-own [
   orbit-index       ; which orbit a satellite belongs to (0 to num-orbits - 1)
-  event-detected    ; 0 or 1 indicating if a satellite sensor is withing range of an event patch
+;  event-detected    ; 0 or 1 indicating if a satellite sensor is withing range of an event patch
   event-priority    ; Priority of the detected event
   gs-visibility     ; 0 or 1 indicating if the satellite is connected to a ground station
+  distances-to-gs    ; list to store distances to each ground station
+  closest-gs         ; the closest ground station
+  distance-to-closest-gs  ; distance to the closest ground station
+  ;links-to-closest-gs  ; New variable to store num links to closest ground station
+
+  ; New variables for enhanced event detection
+  events-detected           ; list of event types detected
+  event-coverage-percentages ; list of coverage percentages for each event type
+  total-sensor-patches      ; total number of patches within sensor coverage
+  event-centers             ; list of center coordinates for each event type
+  event-distances           ; list of distances to each event center
+  event-directions          ; list of directions to each event center
+  interpreted-event-directions
+  event-exposure-times      ; list of exposure times for each event type
   north-link        ; link to the satellite directly north
   south-link        ; link to the satellite directly south
   east-link         ; link to the satellite directly east
@@ -32,10 +47,7 @@ satellites-own [
   southwest-link    ; link to the satellite in the southwest
   over-static-zone  ; 0 or 1 indicating if the satellite is over a static monitoring zone
   outline-color     ; color of the satellite's outline
-  distances-to-gs    ; list to store distances to each ground station
-  closest-gs         ; the closest ground station
-  distance-to-closest-gs  ; distance to the closest ground station
-  links-to-closest-gs  ; New variable to store num links to closest ground station
+
 
 ]
 
@@ -61,9 +73,9 @@ to setup
     set event-end-time 0
     set event-type 0
   ]
-  ask satellites [
-    set links-to-closest-gs 9999  ; Initialize to a large number
-  ]
+;  ask satellites [
+;    set links-to-closest-gs 9999  ; Initialize to a large number
+;  ]
   reset-ticks
 end
 
@@ -124,7 +136,7 @@ to create-satellites-with-coverage
         set outline-color black
         set size 1.5
         set orbit-index i  ; assign it to this orbit
-        set event-detected 0  ; initialize event detection status
+;        set event-detected 0  ; initialize event detection status
         set event-priority 0
         ; Initialize inter-satellite link variables
         set north-link nobody
@@ -242,34 +254,35 @@ to go
   draw-satcom-coverage
   draw-sensor-circles
   detect-events
+  ;track-event-movement
   detect-gs-coverage
 ;  update-closest-path-to-gs
   update-colors
+  ;draw-event-direction-arrows
   ;draw-inter-satellite-links
 ;  update-satellite-colors
   tick
 end
 
-;to calculate-distances-to-ground-stations
-;  ask satellites [
-;    set distances-to-gs []
-;    let this-satellite self
-;    ask ground-stations [
-;      let dist distance this-satellite
-;      ask this-satellite [
-;        set distances-to-gs lput (list myself dist) distances-to-gs
-;        if this-satellite = satellite 6 [
-;          print distances-to-gs
-;        ]
-;      ]
-;    ]
-;    set distances-to-gs sort-by [[d1 d2] -> item 1 d1 < item 1 d2] distances-to-gs
-;    if not empty? distances-to-gs [
-;      set closest-gs item 0 first distances-to-gs
-;      set distance-to-closest-gs item 1 first distances-to-gs
-;    ]
-;  ]
-;end
+to draw-event-direction-arrows
+  ask satellites [
+    foreach event-directions [ dir ->
+      let arrow-end (list (xcor + sin dir) (ycor + cos dir))
+      draw-line-to arrow-end red
+    ]
+  ]
+end
+
+to draw-line-to [end-point line-color]
+  let start-xcor xcor
+  let start-ycor ycor
+  pen-up
+  setxy item 0 end-point item 1 end-point
+  set color line-color
+  pen-down
+  setxy start-xcor start-ycor
+  pen-up
+end
 
 to calculate-distances-to-ground-stations
   ask satellites [
@@ -494,6 +507,7 @@ to-report get-event-priority [evt-type]
 end
 
 
+
 to-report highest-priority-event [events]
   let max-priority 0
   let highest-priority-event-type 0
@@ -507,19 +521,152 @@ to-report highest-priority-event [events]
   report highest-priority-event-type
 end
 
+;to detect-events
+;  ask satellites [
+;    let detected-events [event-type] of patches in-radius sensor-coverage with [event-intensity > 0]
+;    let over-static patches in-radius sensor-coverage with [is-static-zone = true]
+;    ifelse not empty? detected-events [
+;      let highest-priority-evt highest-priority-event detected-events
+;      set event-detected highest-priority-evt
+;      set event-priority get-event-priority highest-priority-evt
+;    ] [
+;      set event-detected 0
+;      set event-priority 0
+;    ]
+;    set over-static-zone ifelse-value (any? over-static) [1] [0]
+;  ]
+;end
+
 to detect-events
   ask satellites [
-    let detected-events [event-type] of patches in-radius sensor-coverage with [event-intensity > 0]
-    let over-static patches in-radius sensor-coverage with [is-static-zone = true]
-    ifelse not empty? detected-events [
-      let highest-priority-evt highest-priority-event detected-events
-      set event-detected highest-priority-evt
-      set event-priority get-event-priority highest-priority-evt
+    ; Reset detection variables
+    set events-detected []
+    set event-coverage-percentages []
+    set event-centers []
+    set event-distances []
+    set event-directions []
+    set interpreted-event-directions []
+    set event-exposure-times []
+
+    ; Get all patches within sensor coverage
+    let covered-patches patches in-radius sensor-coverage
+    set total-sensor-patches count covered-patches
+
+    ; Detect events
+    let detected-event-patches covered-patches with [event-intensity > 0]
+    let event-types remove-duplicates [event-type] of detected-event-patches
+
+    foreach event-types [ evt-type ->
+      let type-patches detected-event-patches with [event-type = evt-type]
+      let coverage-percentage (count type-patches / total-sensor-patches) * 100
+
+      ; Calculate event center based on the chosen method
+      let event-center nobody
+      ifelse use-true-event-centers? [
+        ; Calculate the true event center
+        let all-event-patches patches with [event-type = evt-type]
+        let total-intensity sum [event-intensity] of all-event-patches
+        let weighted-x sum [pxcor * event-intensity] of all-event-patches
+        let weighted-y sum [pycor * event-intensity] of all-event-patches
+        let center-x weighted-x / total-intensity
+        let center-y weighted-y / total-intensity
+        set event-center patch center-x center-y
+      ] [
+        ; Estimate event center (existing logic)
+        let center-x mean [pxcor] of type-patches
+        let center-y mean [pycor] of type-patches
+        set event-center patch center-x center-y
+      ]
+
+      ; Calculate distance and direction to event center
+      let dist distance event-center
+      let dir towards event-center
+      let interpreted-dir interpret-direction dir
+
+      ; Update event detection variables
+      set events-detected lput evt-type events-detected
+      set event-coverage-percentages lput coverage-percentage event-coverage-percentages
+      set event-centers lput event-center event-centers
+      set event-distances lput dist event-distances
+      set event-directions lput dir event-directions
+      set interpreted-event-directions lput interpreted-dir interpreted-event-directions
+      set event-exposure-times lput 1 event-exposure-times
+    ]
+
+    ; Update event priority
+    ifelse not empty? events-detected [
+      set event-priority max (map get-event-priority events-detected)
     ] [
-      set event-detected 0
       set event-priority 0
     ]
-    set over-static-zone ifelse-value (any? over-static) [1] [0]
+
+    ; Update over-static-zone
+    set over-static-zone ifelse-value (any? covered-patches with [is-static-zone = true]) [1] [0]
+  ]
+end
+
+; Helper function to interpret direction
+to-report interpret-direction [direction]
+  if direction >= 0 and direction < 22.5 or direction >= 337.5 and direction < 360 [
+    report "North"
+  ]
+  if direction >= 22.5 and direction < 67.5 [
+    report "Northeast"
+  ]
+  if direction >= 67.5 and direction < 112.5 [
+    report "East"
+  ]
+  if direction >= 112.5 and direction < 157.5 [
+    report "Southeast"
+  ]
+  if direction >= 157.5 and direction < 202.5 [
+    report "South"
+  ]
+  if direction >= 202.5 and direction < 247.5 [
+    report "Southwest"
+  ]
+  if direction >= 247.5 and direction < 292.5 [
+    report "West"
+  ]
+  if direction >= 292.5 and direction < 337.5 [
+    report "Northwest"
+  ]
+end
+
+to track-event-movement
+  ask satellites [
+    let previous-centers event-centers
+    let previous-distances event-distances
+
+    detect-events ; Update current event information
+
+    ; Compare current and previous event information
+    (foreach events-detected previous-centers previous-distances [ [evt-type prev-center prev-dist] ->
+      let current-index position evt-type events-detected
+      if current-index != false [
+        let current-center item current-index event-centers
+        let current-dist item current-index event-distances
+
+        ; Calculate movement
+        ifelse prev-center != nobody [
+          let movement towards prev-center - towards current-center
+          let distance-change prev-dist - current-dist
+
+          ; Here you can use 'movement' and 'distance-change' to determine if the satellite
+          ; is moving towards or away from the event, and at what rate
+          ; For example:
+          if distance-change > 0 [
+            print (word "Moving towards event type " evt-type " at rate " distance-change)
+          ]
+          if distance-change < 0 [
+            print (word "Moving away from event type " evt-type " at rate " (- distance-change))
+          ]
+        ] [
+          ; This is a newly detected event
+          print (word "New event of type " evt-type " detected")
+        ]
+      ]
+    ])
   ]
 end
 
@@ -547,12 +694,13 @@ end
 
 
 
-; update colors based on event detection and ground station connection
 to update-colors
   let all-distances [distance-to-closest-gs] of satellites
   ask satellites [
-    ifelse event-detected > 0 [
-      set color item (event-detected - 1) event-colors
+    ifelse not empty? events-detected [
+      ; Color based on the highest priority event detected
+      let highest-priority-event-type highest-priority-event events-detected
+      set color item (highest-priority-event-type - 1) event-colors
     ] [
       ifelse over-static-zone = 1 [
         set color static-zone-color
@@ -560,15 +708,12 @@ to update-colors
         ifelse gs-visibility = 1 [
           set color red
         ] [
-        if not empty? all-distances [
-          let min-distance-to-gs min all-distances
-          let max-distance-to-gs max all-distances
-
-           set color scale-color red distance-to-closest-gs (-1 * (min-distance-to-gs) - 6) (max-distance-to-gs - 6)
+          if not empty? all-distances [
+            let min-distance-to-gs min all-distances
+            let max-distance-to-gs max all-distances
+            set color scale-color red distance-to-closest-gs (-1 * (min-distance-to-gs) - 6) (max-distance-to-gs - 6)
           ]
         ]
-
-;        set color scale-color red links-to-closest-gs -2 2
       ]
     ]
     draw-satellite-with-outline
@@ -599,14 +744,14 @@ to draw-satellite-with-outline
   stamp
 end
 
-; Update satellite colors based on event detection
-to update-satellite-colors
-  ask satellites [
-    ifelse event-detected = 1
-      [ set color yellow ]  ; change color to yellow if event is detected
-      [ set color red ]     ; change color back to red if no event is detected
-  ]
-end
+;; Update satellite colors based on event detection
+;to update-satellite-colors
+;  ask satellites [
+;    ifelse event-detected = 1
+;      [ set color yellow ]  ; change color to yellow if event is detected
+;      [ set color red ]     ; change color back to red if no event is detected
+;  ]
+;end
 
 ; New procedure to update inter-satellite links after movement
 to update-inter-satellite-links
@@ -716,7 +861,7 @@ min-event-duration
 min-event-duration
 0
 1000
-360.0
+430.0
 10
 1
 NIL
@@ -731,7 +876,7 @@ max-events
 max-events
 0
 5000
-960.0
+1830.0
 10
 1
 NIL
@@ -806,7 +951,7 @@ min-event-size
 min-event-size
 0
 10
-7.0
+4.0
 1
 1
 NIL
@@ -821,7 +966,7 @@ max-event-size
 max-event-size
 0
 100
-5.0
+9.0
 1
 1
 NIL
@@ -883,7 +1028,7 @@ num-ground-stations
 num-ground-stations
 0
 100
-2.0
+4.0
 1
 1
 NIL
@@ -972,7 +1117,7 @@ max-static-zones
 max-static-zones
 0
 100
-4.0
+13.0
 1
 1
 NIL
@@ -992,6 +1137,17 @@ max-static-zone-size
 1
 NIL
 HORIZONTAL
+
+SWITCH
+455
+750
+707
+783
+use-true-event-centers?
+use-true-event-centers?
+1
+1
+-1000
 
 @#$#@#$#@
 ## WHAT IS IT?
