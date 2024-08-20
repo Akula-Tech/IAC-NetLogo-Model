@@ -10,12 +10,13 @@ globals [
   event-colors      ; list of colors for different event types
   event-priorities  ; list of priorities for different event types
   static-zone-color ; color for static monitoring zones
-
+  task-id-counter  ; Counter for generating unique task IDs
 ]
 
 breed [ground-stations ground-station]
 breed [coverage-circles coverage-circle]
 breed [satellites satellite]
+breed [tasks task]
 
 
 satellites-own [
@@ -47,9 +48,39 @@ satellites-own [
   southwest-link    ; link to the satellite in the southwest
   over-static-zone  ; 0 or 1 indicating if the satellite is over a static monitoring zone
   outline-color     ; color of the satellite's outline
-
+  power
+  remote-sensing-payload
+  dp-unit-tops
+  task-backlog
+  task-success-rate
 
 ]
+
+tasks-own [
+  task-id               ; Unique identifier for the task
+  task-type             ; Type of task (e.g., "low-power-detection", "medium-power-detection", etc.)
+  task-priority              ; Priority of the task (higher number = higher priority)
+  time-required         ; Time required to complete the task (in ticks)
+  power-required        ; Power required to complete the task
+  score                 ; Score given if the task is completed
+  sensor-coverage-req   ; Required sensor coverage (as a percentage)
+  payload-req           ; Required remote-sensing payload/sensor
+
+  ; Event-related properties
+  event-xcor            ; X-coordinate of the associated event
+  event-ycor            ; Y-coordinate of the associated event
+
+  ; Task status properties
+  status                ; Current status of the task (e.g., "unassigned", "assigned", "in-progress", "completed")
+  assigned-to           ; The satellite assigned to this task (if any)
+  progress              ; Current progress of the task (0-100%)
+
+  ; For relay and sub-contracting tasks
+  origin-satellite      ; The satellite that originated the task
+  destination-satellite ; The intended recipient satellite or ground station
+]
+
+
 
 ground-stations-own [
   coverage-area     ; radius of the ground station's coverage area
@@ -73,10 +104,49 @@ to setup
     set event-end-time 0
     set event-type 0
   ]
+  set task-id-counter 0
 ;  ask satellites [
 ;    set links-to-closest-gs 9999  ; Initialize to a large number
 ;  ]
   reset-ticks
+end
+
+; Task generation procedure
+to generate-task [task-type-input priority-input time-req score-input coverage-req payload-input event-x event-y]
+  create-tasks 1 [
+    set task-id task-id-counter
+    set task-type task-type-input
+    set task-priority priority-input
+    set time-required time-req
+    set score score-input
+    set sensor-coverage-req coverage-req
+    set payload-req payload-input
+    set event-xcor event-x
+    set event-ycor event-y
+    set status "unassigned"
+    set assigned-to nobody
+    set progress 0
+    set origin-satellite nobody
+    set destination-satellite nobody
+
+    ; Set power-required based on task-type
+    set power-required (
+      ifelse-value
+      task-type = "isl" [ power-req-isl ]
+      task-type = "gs" [ power-req-gs ]
+      task-type = "rs" [ power-req-rs ]
+      task-type = "dp" [ power-req-dp ]
+      task-type = "ai-low" [ power-req-ai-low ]
+      task-type = "ai-mid" [ power-req-ai-mid ]
+      task-type = "ai-high" [ power-req-ai-high ]
+      [ 0 ]  ; Default case, you might want to handle this differently
+    )
+
+    ; Position the task at the event location
+    setxy event-x event-y
+    hide-turtle  ; Hide the task "turtle" as we don't need to visualize it
+  ]
+  set task-id-counter task-id-counter + 1
 end
 
 ; New procedure to initialize patches
@@ -147,7 +217,7 @@ to create-satellites-with-coverage
         set northwest-link nobody
         set southeast-link nobody
         set southwest-link nobody
-
+        set power 100
       ]
     ]
   ]
@@ -819,10 +889,10 @@ ticks
 30.0
 
 BUTTON
-935
-10
-1010
-43
+1205
+45
+1280
+78
 NIL
 setup\n
 NIL
@@ -836,10 +906,10 @@ NIL
 1
 
 BUTTON
-935
-55
-998
-88
+1205
+90
+1268
+123
 NIL
 go
 T
@@ -853,10 +923,10 @@ NIL
 1
 
 SLIDER
-750
-325
-900
-358
+990
+130
+1159
+163
 min-event-duration
 min-event-duration
 0
@@ -868,25 +938,25 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-415
-880
-448
+989
+222
+1119
+255
 max-events
 max-events
 0
 5000
-1830.0
+1310.0
 10
 1
 NIL
 HORIZONTAL
 
 SLIDER
-750
-99
-922
-132
+764
+129
+917
+162
 agent-speed
 agent-speed
 0.01
@@ -898,10 +968,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-370
-900
-403
+990
+177
+1140
+210
 max-event-duration
 max-event-duration
 0
@@ -913,10 +983,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-9
-922
-42
+766
+38
+918
+71
 num-orbits
 num-orbits
 0
@@ -928,10 +998,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-54
-922
-87
+764
+84
+917
+117
 num-sats-per-orbit
 num-sats-per-orbit
 0
@@ -943,10 +1013,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-235
-890
-268
+991
+37
+1131
+70
 min-event-size
 min-event-size
 0
@@ -958,10 +1028,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-280
-880
-313
+991
+82
+1121
+115
 max-event-size
 max-event-size
 0
@@ -973,10 +1043,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-144
-922
-177
+764
+174
+917
+207
 sensor-coverage
 sensor-coverage
 0
@@ -988,10 +1058,10 @@ NIL
 HORIZONTAL
 
 BUTTON
-935
-100
-1007
-133
+1205
+135
+1277
+168
 go once
 go\n
 NIL
@@ -1005,10 +1075,10 @@ NIL
 1
 
 SLIDER
-750
-460
-925
-493
+989
+271
+1179
+304
 event-dissipation-rate
 event-dissipation-rate
 0
@@ -1020,10 +1090,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-506
-925
-539
+760
+430
+935
+463
 num-ground-stations
 num-ground-stations
 0
@@ -1035,10 +1105,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-586
-940
-619
+758
+516
+955
+549
 ground-station-coverage
 ground-station-coverage
 0
@@ -1050,10 +1120,10 @@ NIL
 HORIZONTAL
 
 SLIDER
-750
-190
-925
-223
+764
+219
+918
+252
 satcom-coverage
 satcom-coverage
 0
@@ -1065,10 +1135,10 @@ NIL
 HORIZONTAL
 
 SWITCH
-750
-630
-925
-663
+763
+264
+938
+297
 enable-north-south?
 enable-north-south?
 0
@@ -1076,10 +1146,10 @@ enable-north-south?
 -1000
 
 SWITCH
-750
-675
-925
-708
+763
+309
+938
+342
 enable-east-west?
 enable-east-west?
 0
@@ -1087,10 +1157,10 @@ enable-east-west?
 -1000
 
 SWITCH
-750
-720
-925
-753
+763
+354
+938
+387
 enable-diagonals?
 enable-diagonals?
 0
@@ -1098,10 +1168,10 @@ enable-diagonals?
 -1000
 
 SWITCH
-750
-546
-912
-579
+760
+474
+938
+507
 even-gs-distribution
 even-gs-distribution
 0
@@ -1109,25 +1179,25 @@ even-gs-distribution
 -1000
 
 SLIDER
-890
-415
-1030
-448
+775
+645
+915
+678
 max-static-zones
 max-static-zones
 0
 100
-13.0
+18.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-890
-280
-1045
-313
+760
+600
+930
+633
 max-static-zone-size
 max-static-zone-size
 0
@@ -1139,15 +1209,153 @@ NIL
 HORIZONTAL
 
 SWITCH
-455
-750
-707
-783
+988
+321
+1192
+354
 use-true-event-centers?
 use-true-event-centers?
 1
 1
 -1000
+
+INPUTBOX
+975
+420
+1087
+480
+power-req-isl
+0.0
+1
+0
+Number
+
+INPUTBOX
+1100
+419
+1195
+479
+power-req-gs
+0.0
+1
+0
+Number
+
+INPUTBOX
+974
+490
+1069
+550
+power-req-dp
+0.0
+1
+0
+Number
+
+INPUTBOX
+1081
+490
+1196
+550
+power-req-ai-low
+0.0
+1
+0
+Number
+
+INPUTBOX
+972
+564
+1087
+624
+power-req-ai-mid
+0.0
+1
+0
+Number
+
+INPUTBOX
+1097
+564
+1220
+624
+power-req-ai-high
+0.0
+1
+0
+Number
+
+TEXTBOX
+788
+13
+891
+32
+Satellite Setup
+13
+0.0
+0
+
+TEXTBOX
+1021
+12
+1111
+32
+Events Setup\n
+13
+0.0
+0
+
+TEXTBOX
+778
+402
+916
+422
+Ground Station Setup
+13
+0.0
+0
+
+TEXTBOX
+793
+574
+910
+594
+Static Zone Setup
+13
+0.0
+0
+
+TEXTBOX
+1085
+395
+1252
+415
+Power Requirements
+13
+0.0
+0
+
+INPUTBOX
+1205
+420
+1305
+480
+power-req-rs
+0.0
+1
+0
+Number
+
+INPUTBOX
+1205
+490
+1320
+550
+power-regen-rate
+0.0
+1
+0
+Number
 
 @#$#@#$#@
 ## WHAT IS IT?
