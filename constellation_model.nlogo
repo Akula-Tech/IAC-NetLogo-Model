@@ -48,11 +48,20 @@ satellites-own [
   southwest-link    ; link to the satellite in the southwest
   over-static-zone  ; 0 or 1 indicating if the satellite is over a static monitoring zone
   outline-color     ; color of the satellite's outline
-  power
-  remote-sensing-payload
   dp-unit-tops
-  task-backlog
+
+  power                     ; Current power level of the satellite
+  max-power                 ; Maximum power capacity
+  power-generation-rate     ; Rate at which the satellite generates power (per tick)
+  remote-sensing-payload    ; available remote sensing payload
+  current-task              ; The task currently being executed by the satellite
+  task-queue                ; List of tasks assigned to this satellite but not yet executed
+  completed-tasks           ; List of tasks completed by this satellite
+  total-score               ; Cumulative score from completed tasks
   task-success-rate
+  ; Properties for contract-network protocol
+  available-for-tasks       ; Boolean indicating if the satellite can take on new tasks
+  bid-in-progress           ; Boolean indicating if the satellite is currently bidding on a task
 
 ]
 
@@ -96,7 +105,8 @@ to setup
   draw-ground-station-coverage
   create-satellites-with-coverage
   draw-satcom-coverage
-  draw-sensor-circles
+  ;draw-sensor-circles
+  draw-sensor-rectangles
   setup-inter-satellite-links
   setup-static-zones
   ask patches [
@@ -322,7 +332,8 @@ to go
   update-inter-satellite-links
   manage-events
   draw-satcom-coverage
-  draw-sensor-circles
+  ;draw-sensor-circles
+  draw-sensor-rectangles
   detect-events
   ;track-event-movement
   detect-gs-coverage
@@ -419,6 +430,43 @@ to draw-sensor-circles
     set heading original-heading
   ]
 end
+
+to draw-sensor-rectangles
+  ask satellites [
+    let original-color color
+    let original-heading heading
+    pen-up
+    set color white
+
+    ; Store the original position
+    let center-x xcor
+    let center-y ycor
+
+    ; Calculate rectangle corners
+    let half-length sensor-length / 2
+    let half-width sensor-width / 2
+    let x1 (center-x - half-width)
+    let y1 (center-y + half-length)
+    let x2 (center-x + half-width)
+    let y2 (center-y - half-length)
+
+    ; Draw the rectangle
+    pen-down
+    setxy x1 y1
+    setxy x2 y1
+    setxy x2 y2
+    setxy x1 y2
+    setxy x1 y1
+
+    ; Return to the original position and reset properties
+    pen-up
+    setxy center-x center-y
+    set color original-color
+    set heading original-heading
+  ]
+end
+
+
 
 ; Draw satcom coverage circles around satellites
 to draw-satcom-coverage
@@ -606,6 +654,16 @@ end
 ;    set over-static-zone ifelse-value (any? over-static) [1] [0]
 ;  ]
 ;end
+to-report patches-in-sensor-range [sat]
+  let half-width [sensor-width] of sat / 2
+  let half-length [sensor-length] of sat / 2
+  report patches with [
+    abs (pxcor - [xcor] of sat) <= half-width and
+    abs (pycor - [ycor] of sat) <= half-length
+  ]
+end
+
+
 
 to detect-events
   ask satellites [
@@ -619,7 +677,11 @@ to detect-events
     set event-exposure-times []
 
     ; Get all patches within sensor coverage
-    let covered-patches patches in-radius sensor-coverage
+;    let covered-patches patches in-radius sensor-coverage
+;    set total-sensor-patches count covered-patches
+
+    ;let covered-patches patches in-rectangle sensor-width sensor-length
+    let covered-patches patches-in-sensor-range self
     set total-sensor-patches count covered-patches
 
     ; Detect events
@@ -703,42 +765,42 @@ to-report interpret-direction [direction]
   ]
 end
 
-to track-event-movement
-  ask satellites [
-    let previous-centers event-centers
-    let previous-distances event-distances
-
-    detect-events ; Update current event information
-
-    ; Compare current and previous event information
-    (foreach events-detected previous-centers previous-distances [ [evt-type prev-center prev-dist] ->
-      let current-index position evt-type events-detected
-      if current-index != false [
-        let current-center item current-index event-centers
-        let current-dist item current-index event-distances
-
-        ; Calculate movement
-        ifelse prev-center != nobody [
-          let movement towards prev-center - towards current-center
-          let distance-change prev-dist - current-dist
-
-          ; Here you can use 'movement' and 'distance-change' to determine if the satellite
-          ; is moving towards or away from the event, and at what rate
-          ; For example:
-          if distance-change > 0 [
-            print (word "Moving towards event type " evt-type " at rate " distance-change)
-          ]
-          if distance-change < 0 [
-            print (word "Moving away from event type " evt-type " at rate " (- distance-change))
-          ]
-        ] [
-          ; This is a newly detected event
-          print (word "New event of type " evt-type " detected")
-        ]
-      ]
-    ])
-  ]
-end
+;to track-event-movement
+;  ask satellites [
+;    let previous-centers event-centers
+;    let previous-distances event-distances
+;
+;    detect-events ; Update current event information
+;
+;    ; Compare current and previous event information
+;    (foreach events-detected previous-centers previous-distances [ [evt-type prev-center prev-dist] ->
+;      let current-index position evt-type events-detected
+;      if current-index != false [
+;        let current-center item current-index event-centers
+;        let current-dist item current-index event-distances
+;
+;        ; Calculate movement
+;        ifelse prev-center != nobody [
+;          let movement towards prev-center - towards current-center
+;          let distance-change prev-dist - current-dist
+;
+;          ; Here you can use 'movement' and 'distance-change' to determine if the satellite
+;          ; is moving towards or away from the event, and at what rate
+;          ; For example:
+;          if distance-change > 0 [
+;            print (word "Moving towards event type " evt-type " at rate " distance-change)
+;          ]
+;          if distance-change < 0 [
+;            print (word "Moving away from event type " evt-type " at rate " (- distance-change))
+;          ]
+;        ] [
+;          ; This is a newly detected event
+;          print (word "New event of type " evt-type " detected")
+;        ]
+;      ]
+;    ])
+;  ]
+;end
 
 ; procedure to detect ground station coverage
 to detect-gs-coverage
@@ -753,6 +815,8 @@ to detect-gs-coverage
     let this-satellite self
     ask ground-stations [
       if distance this-satellite <= (satcom-coverage + coverage-area) [
+      ;if member? patch-here patches-in-sensor-range this-satellite or distance this-satellite <= coverage-area [
+
         ask this-satellite [
           set gs-visibility 1
         ]
@@ -946,7 +1010,7 @@ max-events
 max-events
 0
 5000
-1310.0
+1260.0
 10
 1
 NIL
@@ -976,7 +1040,7 @@ max-event-duration
 max-event-duration
 0
 1000
-0.0
+570.0
 10
 1
 NIL
@@ -991,7 +1055,7 @@ num-orbits
 num-orbits
 0
 10
-6.0
+10.0
 1
 1
 NIL
@@ -1006,7 +1070,7 @@ num-sats-per-orbit
 num-sats-per-orbit
 0
 10
-5.0
+4.0
 1
 1
 NIL
@@ -1036,7 +1100,7 @@ max-event-size
 max-event-size
 0
 100
-9.0
+4.0
 1
 1
 NIL
@@ -1051,7 +1115,7 @@ sensor-coverage
 sensor-coverage
 0
 10
-2.3
+2.4
 0.1
 1
 NIL
@@ -1091,14 +1155,14 @@ HORIZONTAL
 
 SLIDER
 760
-430
+510
 935
-463
+543
 num-ground-stations
 num-ground-stations
 0
-100
-4.0
+10
+5.0
 1
 1
 NIL
@@ -1106,9 +1170,9 @@ HORIZONTAL
 
 SLIDER
 758
-516
+596
 955
-549
+629
 ground-station-coverage
 ground-station-coverage
 0
@@ -1121,9 +1185,9 @@ HORIZONTAL
 
 SLIDER
 764
-219
+299
 918
-252
+332
 satcom-coverage
 satcom-coverage
 0
@@ -1136,9 +1200,9 @@ HORIZONTAL
 
 SWITCH
 763
-264
+344
 938
-297
+377
 enable-north-south?
 enable-north-south?
 0
@@ -1147,9 +1211,9 @@ enable-north-south?
 
 SWITCH
 763
-309
+389
 938
-342
+422
 enable-east-west?
 enable-east-west?
 0
@@ -1158,9 +1222,9 @@ enable-east-west?
 
 SWITCH
 763
-354
+434
 938
-387
+467
 enable-diagonals?
 enable-diagonals?
 0
@@ -1169,9 +1233,9 @@ enable-diagonals?
 
 SWITCH
 760
-474
+554
 938
-507
+587
 even-gs-distribution
 even-gs-distribution
 0
@@ -1180,14 +1244,14 @@ even-gs-distribution
 
 SLIDER
 775
-645
+725
 915
-678
+758
 max-static-zones
 max-static-zones
 0
 100
-18.0
+10.0
 1
 1
 NIL
@@ -1195,9 +1259,9 @@ HORIZONTAL
 
 SLIDER
 760
-600
+680
 930
-633
+713
 max-static-zone-size
 max-static-zone-size
 0
@@ -1307,9 +1371,9 @@ Events Setup\n
 
 TEXTBOX
 778
-402
+482
 916
-422
+502
 Ground Station Setup
 13
 0.0
@@ -1317,9 +1381,9 @@ Ground Station Setup
 
 TEXTBOX
 793
-574
+654
 910
-594
+674
 Static Zone Setup
 13
 0.0
@@ -1356,6 +1420,36 @@ power-regen-rate
 1
 0
 Number
+
+SLIDER
+765
+215
+915
+248
+sensor-length
+sensor-length
+0
+10
+2.0
+1
+1
+NIL
+HORIZONTAL
+
+SLIDER
+765
+255
+915
+288
+sensor-width
+sensor-width
+0
+10
+9.0
+3
+1
+NIL
+HORIZONTAL
 
 @#$#@#$#@
 ## WHAT IS IT?
