@@ -48,11 +48,11 @@ satellites-own [
   southwest-link    ; link to the satellite in the southwest
   over-static-zone  ; 0 or 1 indicating if the satellite is over a static monitoring zone
   outline-color     ; color of the satellite's outline
-  dp-unit-tops
+  dp-unit-tops      ; TOPS measure for the data processing unit
 
   power                     ; Current power level of the satellite
   max-power                 ; Maximum power capacity
-  power-generation-rate     ; Rate at which the satellite generates power (per tick)
+  ;power-generation-rate     ; Rate at which the satellite generates power (per tick)
   remote-sensing-payload    ; available remote sensing payload
   current-task              ; The task currently being executed by the satellite
   task-queue                ; List of tasks assigned to this satellite but not yet executed
@@ -68,12 +68,12 @@ satellites-own [
 tasks-own [
   task-id               ; Unique identifier for the task
   task-type             ; Type of task (e.g., "low-power-detection", "medium-power-detection", etc.)
-  task-priority              ; Priority of the task (higher number = higher priority)
+  task-priority         ; Priority of the task (higher number = higher priority)
   time-required         ; Time required to complete the task (in ticks)
   power-required        ; Power required to complete the task
   score                 ; Score given if the task is completed
-  sensor-coverage-req   ; Required sensor coverage (as a percentage)
-  payload-req           ; Required remote-sensing payload/sensor
+  ;sensor-coverage-req   ; Required sensor coverage (as a percentage)
+  ;payload-req           ; Required remote-sensing payload/sensor
 
   ; Event-related properties
   event-xcor            ; X-coordinate of the associated event
@@ -105,7 +105,6 @@ to setup
   draw-ground-station-coverage
   create-satellites-with-coverage
   draw-satcom-coverage
-  ;draw-sensor-circles
   draw-sensor-rectangles
   setup-inter-satellite-links
   setup-static-zones
@@ -115,9 +114,7 @@ to setup
     set event-type 0
   ]
   set task-id-counter 0
-;  ask satellites [
-;    set links-to-closest-gs 9999  ; Initialize to a large number
-;  ]
+
   reset-ticks
 end
 
@@ -127,10 +124,9 @@ to generate-task [task-type-input priority-input time-req score-input coverage-r
     set task-id task-id-counter
     set task-type task-type-input
     set task-priority priority-input
-    set time-required time-req
     set score score-input
-    set sensor-coverage-req coverage-req
-    set payload-req payload-input
+    ;set sensor-coverage-req coverage-req
+    ;set payload-req payload-input
     set event-xcor event-x
     set event-ycor event-y
     set status "unassigned"
@@ -149,6 +145,19 @@ to generate-task [task-type-input priority-input time-req score-input coverage-r
       task-type = "ai-low" [ power-req-ai-low ]
       task-type = "ai-mid" [ power-req-ai-mid ]
       task-type = "ai-high" [ power-req-ai-high ]
+      [ 0 ]  ; Default case, you might want to handle this differently
+    )
+
+    ; Set power-required based on task-type
+    set time-required (
+      ifelse-value
+      task-type = "isl" [ time-req-isl ]
+      task-type = "gs" [ time-req-gs ]
+      task-type = "rs" [ time-req-rs ]
+      task-type = "dp" [ time-req-dp ]
+      task-type = "ai-low" [ time-req-ai-low ]
+      task-type = "ai-mid" [ time-req-ai-mid ]
+      task-type = "ai-high" [ time-req-ai-high ]
       [ 0 ]  ; Default case, you might want to handle this differently
     )
 
@@ -227,11 +236,29 @@ to create-satellites-with-coverage
         set northwest-link nobody
         set southeast-link nobody
         set southwest-link nobody
-        set power 100
+        set max-power 100            ; Set maximum power capacity
+        set power max-power          ; Start with full power
+
       ]
     ]
   ]
 end
+
+to manage-power
+  ask satellites [
+    ; Deplete power based on AI usage
+    set power power - power-req-ai-low
+
+    ; Regenerate power if in the first half of the world (sunlight)
+    if xcor < 0 [
+      set power power + power-regen-rate
+    ]
+
+    ; Ensure power stays within bounds
+    set power max (list 0 (min (list power max-power)))
+  ]
+end
+
 
 
 to create-ground-stations-with-coverage
@@ -331,17 +358,13 @@ to go
   maintain-spacing
   update-inter-satellite-links
   manage-events
+  manage-power
   draw-satcom-coverage
-  ;draw-sensor-circles
   draw-sensor-rectangles
   detect-events
-  ;track-event-movement
   detect-gs-coverage
-;  update-closest-path-to-gs
   update-colors
-  ;draw-event-direction-arrows
-  ;draw-inter-satellite-links
-;  update-satellite-colors
+
   tick
 end
 
@@ -400,37 +423,7 @@ to move-satellites
   ]
 end
 
-; Draw sensor coverage circles around satellites
-to draw-sensor-circles
-  ask satellites [
-    let original-color color
-    let original-heading heading
-    pen-up
-    set color white
-
-    ; Store the original position
-    let center-x xcor
-    let center-y ycor
-
-    ; Draw the circle
-    pen-down
-    repeat 360 [
-      ; Calculate the next point on the circle
-      let next-x (center-x + (sensor-coverage * sin heading))
-      let next-y (center-y + (sensor-coverage * cos heading))
-      ; Move to the next point
-      setxy next-x next-y
-      rt 1
-    ]
-
-    ; Return to the original position and reset properties
-    pen-up
-    setxy center-x center-y
-    set color original-color
-    set heading original-heading
-  ]
-end
-
+; Draw sensor coverage rectangles around satellites
 to draw-sensor-rectangles
   ask satellites [
     let original-color color
@@ -639,21 +632,7 @@ to-report highest-priority-event [events]
   report highest-priority-event-type
 end
 
-;to detect-events
-;  ask satellites [
-;    let detected-events [event-type] of patches in-radius sensor-coverage with [event-intensity > 0]
-;    let over-static patches in-radius sensor-coverage with [is-static-zone = true]
-;    ifelse not empty? detected-events [
-;      let highest-priority-evt highest-priority-event detected-events
-;      set event-detected highest-priority-evt
-;      set event-priority get-event-priority highest-priority-evt
-;    ] [
-;      set event-detected 0
-;      set event-priority 0
-;    ]
-;    set over-static-zone ifelse-value (any? over-static) [1] [0]
-;  ]
-;end
+
 to-report patches-in-sensor-range [sat]
   let half-width [sensor-width] of sat / 2
   let half-length [sensor-length] of sat / 2
@@ -765,42 +744,7 @@ to-report interpret-direction [direction]
   ]
 end
 
-;to track-event-movement
-;  ask satellites [
-;    let previous-centers event-centers
-;    let previous-distances event-distances
-;
-;    detect-events ; Update current event information
-;
-;    ; Compare current and previous event information
-;    (foreach events-detected previous-centers previous-distances [ [evt-type prev-center prev-dist] ->
-;      let current-index position evt-type events-detected
-;      if current-index != false [
-;        let current-center item current-index event-centers
-;        let current-dist item current-index event-distances
-;
-;        ; Calculate movement
-;        ifelse prev-center != nobody [
-;          let movement towards prev-center - towards current-center
-;          let distance-change prev-dist - current-dist
-;
-;          ; Here you can use 'movement' and 'distance-change' to determine if the satellite
-;          ; is moving towards or away from the event, and at what rate
-;          ; For example:
-;          if distance-change > 0 [
-;            print (word "Moving towards event type " evt-type " at rate " distance-change)
-;          ]
-;          if distance-change < 0 [
-;            print (word "Moving away from event type " evt-type " at rate " (- distance-change))
-;          ]
-;        ] [
-;          ; This is a newly detected event
-;          print (word "New event of type " evt-type " detected")
-;        ]
-;      ]
-;    ])
-;  ]
-;end
+
 
 ; procedure to detect ground station coverage
 to detect-gs-coverage
@@ -878,14 +822,7 @@ to draw-satellite-with-outline
   stamp
 end
 
-;; Update satellite colors based on event detection
-;to update-satellite-colors
-;  ask satellites [
-;    ifelse event-detected = 1
-;      [ set color yellow ]  ; change color to yellow if event is detected
-;      [ set color red ]     ; change color back to red if no event is detected
-;  ]
-;end
+
 
 ; New procedure to update inter-satellite links after movement
 to update-inter-satellite-links
@@ -928,11 +865,11 @@ end
 GRAPHICS-WINDOW
 10
 10
-738
-739
+753
+754
 -1
 -1
-10.141
+10.352113
 1
 10
 1
@@ -1162,7 +1099,7 @@ num-ground-stations
 num-ground-stations
 0
 10
-5.0
+2.0
 1
 1
 NIL
@@ -1285,9 +1222,9 @@ use-true-event-centers?
 
 INPUTBOX
 975
-420
+390
 1087
-480
+450
 power-req-isl
 0.0
 1
@@ -1296,9 +1233,9 @@ Number
 
 INPUTBOX
 1100
-419
+389
 1195
-479
+449
 power-req-gs
 0.0
 1
@@ -1307,9 +1244,9 @@ Number
 
 INPUTBOX
 974
-490
+460
 1069
-550
+520
 power-req-dp
 0.0
 1
@@ -1318,20 +1255,20 @@ Number
 
 INPUTBOX
 1081
-490
+460
 1196
-550
+520
 power-req-ai-low
-0.0
+0.01
 1
 0
 Number
 
 INPUTBOX
 972
-564
+534
 1087
-624
+594
 power-req-ai-mid
 0.0
 1
@@ -1340,9 +1277,9 @@ Number
 
 INPUTBOX
 1097
-564
+534
 1220
-624
+594
 power-req-ai-high
 0.0
 1
@@ -1391,9 +1328,9 @@ Static Zone Setup
 
 TEXTBOX
 1085
-395
+365
 1252
-415
+385
 Power Requirements
 13
 0.0
@@ -1401,9 +1338,9 @@ Power Requirements
 
 INPUTBOX
 1205
-420
+390
 1305
-480
+450
 power-req-rs
 0.0
 1
@@ -1412,11 +1349,11 @@ Number
 
 INPUTBOX
 1205
-490
+460
 1320
-550
+520
 power-regen-rate
-0.0
+0.1
 1
 0
 Number
@@ -1445,8 +1382,8 @@ sensor-width
 sensor-width
 0
 10
-9.0
-3
+6.0
+1
 1
 NIL
 HORIZONTAL
