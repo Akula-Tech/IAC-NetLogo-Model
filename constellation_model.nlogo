@@ -11,6 +11,7 @@ globals [
   event-priorities  ; list of priorities for different event types
   static-zone-color ; color for static monitoring zones
   task-id-counter  ; Counter for generating unique task IDs
+
 ]
 
 breed [ground-stations ground-station]
@@ -55,6 +56,7 @@ satellites-own [
   ;power-generation-rate     ; Rate at which the satellite generates power (per tick)
   remote-sensing-payload    ; available remote sensing payload
   current-task              ; The task currently being executed by the satellite
+  current-tasks             ; List of tasks currently being performed by the satellite
   task-queue                ; List of tasks assigned to this satellite but not yet executed
   completed-tasks           ; List of tasks completed by this satellite
   total-score               ; Cumulative score from completed tasks
@@ -101,6 +103,7 @@ to setup
   setup-orbits
   setup-event-properties
   setup-patches
+
   create-ground-stations-with-coverage
   draw-ground-station-coverage
   create-satellites-with-coverage
@@ -116,17 +119,15 @@ to setup
   set task-id-counter 0
 
   reset-ticks
+  manage-events
 end
 
-; Task generation procedure
 to generate-task [task-type-input priority-input time-req score-input coverage-req payload-input event-x event-y]
   create-tasks 1 [
     set task-id task-id-counter
     set task-type task-type-input
     set task-priority priority-input
     set score score-input
-    ;set sensor-coverage-req coverage-req
-    ;set payload-req payload-input
     set event-xcor event-x
     set event-ycor event-y
     set status "unassigned"
@@ -148,7 +149,7 @@ to generate-task [task-type-input priority-input time-req score-input coverage-r
       [ 0 ]  ; Default case, you might want to handle this differently
     )
 
-    ; Set power-required based on task-type
+    ; Set time-required based on task-type
     set time-required (
       ifelse-value
       task-type = "isl" [ time-req-isl ]
@@ -167,6 +168,7 @@ to generate-task [task-type-input priority-input time-req score-input coverage-r
   ]
   set task-id-counter task-id-counter + 1
 end
+
 
 ; New procedure to initialize patches
 to setup-patches
@@ -238,16 +240,38 @@ to create-satellites-with-coverage
         set southwest-link nobody
         set max-power 100            ; Set maximum power capacity
         set power max-power          ; Start with full power
+        set current-tasks []
+        set events-detected []
 
       ]
     ]
   ]
 end
 
+;to manage-power
+;  ask satellites [
+;    ; Deplete power based on AI usage
+;    set power power - power-req-ai-low
+;
+;    ; Regenerate power if in the first half of the world (sunlight)
+;    if xcor < 0 [
+;      set power power + power-regen-rate
+;    ]
+;
+;    ; Ensure power stays within bounds
+;    set power max (list 0 (min (list power max-power)))
+;  ]
+;end
+
 to manage-power
   ask satellites [
-    ; Deplete power based on AI usage
+    ; Deplete power based on AI usage and current tasks
     set power power - power-req-ai-low
+    foreach current-tasks [ task_ ->
+      if power >= [power-required] of task_ [
+        set power power - [power-required] of task_
+      ]
+    ]
 
     ; Regenerate power if in the first half of the world (sunlight)
     if xcor < 0 [
@@ -359,9 +383,13 @@ to go
   update-inter-satellite-links
   manage-events
   manage-power
+  manage-tasks
   draw-satcom-coverage
   draw-sensor-rectangles
-  detect-events
+  if ticks mod (sensor-width / agent-speed) = 0 [
+    print (word "Detecting events at tick " ticks)
+    detect-events
+  ]
   detect-gs-coverage
   update-colors
 
@@ -643,8 +671,20 @@ to-report patches-in-sensor-range [sat]
 end
 
 
+to-report request-task-generation [task-type-input priority-input event-x event-y]
+  report (list task-type-input priority-input event-x event-y)
+end
+
+
 
 to detect-events
+
+  if ticks mod (sensor-width / agent-speed) != 0 [
+    print (word "Warning: detect-events called unexpectedly at tick " ticks)
+  ]
+
+  let all-task-requests []  ; Initialize this outside the ask satellites block
+
   ask satellites [
     ; Reset detection variables
     set events-detected []
@@ -713,8 +753,88 @@ to detect-events
 
     ; Update over-static-zone
     set over-static-zone ifelse-value (any? covered-patches with [is-static-zone = true]) [1] [0]
+
+
+    let satellite-task-requests []  ; Initialize this for each satellite
+
+    ; Generate task requests for each detected event
+    foreach events-detected [ evt-type ->
+      let event-center item (position evt-type events-detected) event-centers
+
+      ; Request data processing task
+      set satellite-task-requests lput (request-task-generation "dp" evt-type [pxcor] of event-center [pycor] of event-center) satellite-task-requests
+
+      ; Request medium-power detection task
+      set satellite-task-requests lput (request-task-generation "ai-mid" evt-type [pxcor] of event-center [pycor] of event-center) satellite-task-requests
+
+      ; Request high-power detection task
+      set satellite-task-requests lput (request-task-generation "ai-high" evt-type [pxcor] of event-center [pycor] of event-center) satellite-task-requests
+    ]
+
+    ; Add this satellite's requests to the overall list
+    set all-task-requests (sentence all-task-requests satellite-task-requests)
+  ]
+
+  ; Generate tasks based on requests
+  foreach all-task-requests [ request ->
+    let task-type_ item 0 request
+    let priority item 1 request
+    let event-x item 2 request
+    let event-y item 3 request
+
+    generate-task task-type_ priority 0 0 0 0 event-x event-y
+  ]
+
+  ; Assign new tasks to satellites
+  let new-tasks tasks with [assigned-to = nobody]
+  ask new-tasks [
+    let closest-satellite min-one-of satellites [distance myself]
+    set assigned-to closest-satellite
+    set status "in-progress"
+    set origin-satellite closest-satellite
+    set destination-satellite closest-satellite
+    ask closest-satellite [
+      set current-tasks lput myself current-tasks
+    ]
   ]
 end
+
+
+to manage-tasks
+  ask satellites [
+    if not empty? current-tasks [
+      let tasks-to-keep []
+      foreach current-tasks [ task_ ->
+        ; Check if the satellite has enough power for the task
+        ifelse power >= [power-required] of task_ [
+          ; Deduct power
+          set power power - [power-required] of task_
+
+          ; Increase progress
+          ask task_ [
+            set progress progress + 1
+            if progress >= time-required [
+              set status "completed"
+            ]
+          ]
+
+          ; Keep the task if it's not completed
+          if [status] of task_ != "completed" [
+            set tasks-to-keep lput task_ tasks-to-keep
+          ]
+        ]
+        [
+          ; If not enough power, keep the task for later
+          set tasks-to-keep lput task_ tasks-to-keep
+        ]
+      ]
+
+      ; Update current-tasks with only the tasks to keep
+      set current-tasks tasks-to-keep
+    ]
+  ]
+end
+
 
 ; Helper function to interpret direction
 to-report interpret-direction [direction]
@@ -932,7 +1052,7 @@ min-event-duration
 min-event-duration
 0
 1000
-430.0
+880.0
 10
 1
 NIL
@@ -947,7 +1067,7 @@ max-events
 max-events
 0
 5000
-1260.0
+1210.0
 10
 1
 NIL
@@ -992,7 +1112,7 @@ num-orbits
 num-orbits
 0
 10
-10.0
+7.0
 1
 1
 NIL
@@ -1007,7 +1127,7 @@ num-sats-per-orbit
 num-sats-per-orbit
 0
 10
-4.0
+7.0
 1
 1
 NIL
@@ -1022,7 +1142,7 @@ min-event-size
 min-event-size
 0
 10
-4.0
+6.0
 1
 1
 NIL
@@ -1037,7 +1157,7 @@ max-event-size
 max-event-size
 0
 100
-4.0
+6.0
 1
 1
 NIL
@@ -1108,7 +1228,7 @@ HORIZONTAL
 SLIDER
 758
 596
-955
+938
 629
 ground-station-coverage
 ground-station-coverage
@@ -1180,25 +1300,25 @@ even-gs-distribution
 -1000
 
 SLIDER
-775
-725
-915
-758
+785
+710
+925
+743
 max-static-zones
 max-static-zones
 0
 100
-10.0
+8.0
 1
 1
 NIL
 HORIZONTAL
 
 SLIDER
-760
-680
-930
-713
+770
+665
+940
+698
 max-static-zone-size
 max-static-zone-size
 0
@@ -1223,7 +1343,7 @@ use-true-event-centers?
 INPUTBOX
 975
 390
-1087
+1075
 450
 power-req-isl
 0.0
@@ -1232,10 +1352,10 @@ power-req-isl
 Number
 
 INPUTBOX
-1100
-389
-1195
-449
+1085
+390
+1180
+450
 power-req-gs
 0.0
 1
@@ -1243,20 +1363,20 @@ power-req-gs
 Number
 
 INPUTBOX
-974
-460
-1069
-520
+1300
+390
+1400
+450
 power-req-dp
-0.0
+0.01
 1
 0
 Number
 
 INPUTBOX
-1081
+975
 460
-1196
+1075
 520
 power-req-ai-low
 0.01
@@ -1265,23 +1385,23 @@ power-req-ai-low
 Number
 
 INPUTBOX
-972
-534
-1087
-594
+1085
+460
+1180
+520
 power-req-ai-mid
-0.0
+0.02
 1
 0
 Number
 
 INPUTBOX
-1097
-534
-1220
-594
+1190
+460
+1290
+520
 power-req-ai-high
-0.0
+0.04
 1
 0
 Number
@@ -1317,10 +1437,10 @@ Ground Station Setup
 0
 
 TEXTBOX
-793
-654
-910
-674
+803
+639
+920
+659
 Static Zone Setup
 13
 0.0
@@ -1337,9 +1457,9 @@ Power Requirements
 0
 
 INPUTBOX
-1205
+1190
 390
-1305
+1290
 450
 power-req-rs
 0.0
@@ -1348,9 +1468,9 @@ power-req-rs
 Number
 
 INPUTBOX
-1205
+1300
 460
-1320
+1400
 520
 power-regen-rate
 0.1
@@ -1387,6 +1507,93 @@ sensor-width
 1
 NIL
 HORIZONTAL
+
+INPUTBOX
+975
+565
+1075
+625
+time-req-isl
+1.0
+1
+0
+Number
+
+INPUTBOX
+1085
+565
+1180
+625
+time-req-gs
+1.0
+1
+0
+Number
+
+INPUTBOX
+1190
+565
+1290
+625
+time-req-rs
+1.0
+1
+0
+Number
+
+INPUTBOX
+1300
+565
+1400
+625
+time-req-dp
+1.0
+1
+0
+Number
+
+INPUTBOX
+975
+635
+1075
+695
+time-req-ai-low
+1.0
+1
+0
+Number
+
+INPUTBOX
+1085
+635
+1180
+695
+time-req-ai-mid
+2.0
+1
+0
+Number
+
+INPUTBOX
+1190
+635
+1290
+695
+time-req-ai-high
+3.0
+1
+0
+Number
+
+TEXTBOX
+1090
+540
+1240
+558
+Time Requirements
+13
+0.0
+1
 
 @#$#@#$#@
 ## WHAT IS IT?
