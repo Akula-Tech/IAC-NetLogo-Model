@@ -64,6 +64,7 @@ satellites-own [
   ; Properties for contract-network protocol
   available-for-tasks       ; Boolean indicating if the satellite can take on new tasks
   bid-in-progress           ; Boolean indicating if the satellite is currently bidding on a task
+  task-indicators
 
 ]
 
@@ -242,6 +243,7 @@ to create-satellites-with-coverage
         set power max-power          ; Start with full power
         set current-tasks []
         set events-detected []
+        set task-indicators []
 
       ]
     ]
@@ -392,6 +394,7 @@ to go
   ]
   detect-gs-coverage
   update-colors
+  update-satellite-visuals
 
   tick
 end
@@ -942,7 +945,61 @@ to draw-satellite-with-outline
   stamp
 end
 
+to update-satellite-visuals
+  ask satellites [
+    ; Remove old indicators
+    foreach task-indicators [ indicator ->
+      ask indicator [ die ]
+    ]
+    set task-indicators []
 
+    ; Create new indicators for current tasks
+    let num-tasks length current-tasks
+    if num-tasks > 0 [
+      let angle-step 360 / num-tasks
+      let indicator-distance 2  ; Distance from satellite center
+
+      let angle 0
+      foreach current-tasks [ task_ ->
+        let task-type_ [task-type] of task_
+        hatch-coverage-circles 1 [
+          set shape task-type-to-shape task-type_
+          set color task-type-to-color task-type_
+          set size 1
+          set heading angle
+          fd indicator-distance
+          set hidden? false
+          create-link-with myself [
+            tie
+            hide-link
+          ]
+          ask myself [ set task-indicators lput myself task-indicators ]
+        ]
+        set angle angle + angle-step
+      ]
+    ]
+  ]
+end
+
+to-report task-type-to-shape [task-type_]
+  report (
+    ifelse-value
+    task-type_ = "dp" [ "square" ]
+    task-type_ = "ai-mid" [ "triangle" ]
+    task-type_ = "ai-high" [ "star" ]
+    [ "circle" ]  ; default
+  )
+end
+
+to-report task-type-to-color [task-type_]
+  report (
+    ifelse-value
+    task-type_ = "dp" [ yellow ]
+    task-type_ = "ai-mid" [ yellow ]
+    task-type_ = "ai-high" [ yellow ]
+    [ white ]  ; default
+  )
+end
 
 ; New procedure to update inter-satellite links after movement
 to update-inter-satellite-links
@@ -1547,7 +1604,7 @@ INPUTBOX
 1400
 625
 time-req-dp
-1.0
+10.0
 1
 0
 Number
@@ -1569,7 +1626,7 @@ INPUTBOX
 1180
 695
 time-req-ai-mid
-2.0
+20.0
 1
 0
 Number
@@ -1580,7 +1637,7 @@ INPUTBOX
 1290
 695
 time-req-ai-high
-3.0
+30.0
 1
 0
 Number
